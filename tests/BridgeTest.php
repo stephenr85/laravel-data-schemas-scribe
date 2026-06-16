@@ -77,18 +77,19 @@ class BridgeTest extends TestCase
         $this->assertArrayHasKey('WidgetStatus', $root['components']['schemas']);
         $this->assertArrayHasKey('OwnerData', $root['components']['schemas']);
 
-        // pathItem(): request + response point at component refs, $defs stripped.
+        // pathItem(): Scribe passes the bare operation object (not method-keyed);
+        // request + response point at component refs, $defs stripped.
         $pathItem = $generator->pathItem(
-            ['post' => ['responses' => ['200' => []]]],
+            ['responses' => ['200' => []]],
             $groups,
             $endpoint,
         );
 
-        $requestSchema = $pathItem['post']['requestBody']['content']['application/json']['schema'];
+        $requestSchema = $pathItem['requestBody']['content']['application/json']['schema'];
         $this->assertArrayNotHasKey('$defs', $requestSchema);
         $this->assertSame('#/components/schemas/WidgetStatus', $requestSchema['properties']['status']['$ref']);
 
-        $responseSchema = $pathItem['post']['responses']['200']['content']['application/json']['schema'];
+        $responseSchema = $pathItem['responses']['200']['content']['application/json']['schema'];
         $this->assertSame('#/components/schemas/OwnerData', $responseSchema['properties']['owner']['$ref']);
     }
 }

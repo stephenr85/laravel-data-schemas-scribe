@@ -41,7 +41,7 @@ class UseDataResponse extends PhpAttributeStrategy
         }
 
         if (empty($specs)) {
-            return null;
+            return [];
         }
 
         $generator = (new JsonSchemaGenerator)->forResponse();
@@ -69,7 +69,7 @@ class UseDataResponse extends PhpAttributeStrategy
         }
 
         if (empty($stash)) {
-            return null;
+            return [];
         }
 
         $endpointData->custom['dataResponseSchemas'] = $stash;

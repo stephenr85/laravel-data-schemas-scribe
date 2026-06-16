@@ -20,6 +20,10 @@ class DataSchemaGenerator extends OpenApiGenerator
 {
     public function root(array $root, array $groupedEndpoints): array
     {
+        // Our schemas use JSON Schema 2020-12 semantics ($ref siblings, type
+        // arrays for null, examples) — i.e. OpenAPI 3.1, not Scribe's default 3.0.3.
+        $root['openapi'] = '3.1.0';
+
         $schemas = [];
 
         foreach ($groupedEndpoints as $group) {
@@ -39,30 +43,21 @@ class DataSchemaGenerator extends OpenApiGenerator
         return $root;
     }
 
+    /**
+     * Scribe passes the bare operation object here (keys like `requestBody`,
+     * `responses`), not a method-keyed map — it wraps the result under the HTTP
+     * method afterward. So we write the schema at the operation root.
+     */
     public function pathItem(array $pathItem, array $groupedEndpoints, OutputEndpointData $endpoint): array
     {
-        $methods = array_map('strtolower', $endpoint->httpMethods ?? []);
-
         $requestSchema = $endpoint->custom['dataRequestSchema'] ?? null;
         if ($requestSchema) {
-            $operationSchema = $this->operationSchema($requestSchema);
-            foreach ($methods as $method) {
-                if (! isset($pathItem[$method])) {
-                    continue;
-                }
-                $pathItem[$method]['requestBody']['content']['application/json']['schema'] = $operationSchema;
-            }
+            $pathItem['requestBody']['content']['application/json']['schema'] = $this->operationSchema($requestSchema);
         }
 
         foreach ($endpoint->custom['dataResponseSchemas'] ?? [] as $response) {
-            $operationSchema = $this->operationSchema($response['schema']);
             $status = (string) $response['status'];
-            foreach ($methods as $method) {
-                if (! isset($pathItem[$method])) {
-                    continue;
-                }
-                $pathItem[$method]['responses'][$status]['content']['application/json']['schema'] = $operationSchema;
-            }
+            $pathItem['responses'][$status]['content']['application/json']['schema'] = $this->operationSchema($response['schema']);
         }
 
         return $pathItem;

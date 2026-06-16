@@ -37,7 +37,7 @@ class UseDataRequest extends PhpAttributeStrategy
         $dataClass = $attributes[0]->dataClass ?? $this->detectFromSignature($endpointData->method);
 
         if (! $dataClass || ! is_subclass_of($dataClass, Data::class)) {
-            return null;
+            return [];
         }
 
         $schema = (new JsonSchemaGenerator)->forRequest()->generate(new ReflectionClass($dataClass));
