@@ -44,6 +44,15 @@
             ]
         }
     },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../../../vendor/rushing/laravel-data-schemas",
+            "options": {
+                "symlink": true
+            }
+        }
+    ],
     "minimum-stability": "dev",
     "prefer-stable": true,
     "config": {
