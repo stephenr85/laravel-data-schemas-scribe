@@ -7,7 +7,7 @@ use Knuckles\Scribe\Extracting\Strategies\PhpAttributeStrategy;
 use ReflectionClass;
 use ReflectionFunctionAbstract;
 use ReflectionNamedType;
-use Rushing\LaravelDataSchemas\Generators\JsonSchemaGenerator;
+use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Attributes\ResponseFromData;
 use Rushing\LaravelDataSchemasScribe\Support\SchemaExample;
 use Spatie\LaravelData\Data;

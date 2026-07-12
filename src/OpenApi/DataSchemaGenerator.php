@@ -4,7 +4,7 @@ namespace Rushing\LaravelDataSchemasScribe\OpenApi;
 
 use Knuckles\Camel\Output\OutputEndpointData;
 use Knuckles\Scribe\Writing\OpenApiSpecGenerators\OpenApiGenerator;
-use Rushing\LaravelDataSchemas\Support\OpenApi;
+use Schemastud\DataSchemas\Support\OpenApi;
 
 /**
  * The only stage where $ref / $defs / components survive.
