@@ -52,7 +52,13 @@ class DataSchemaGenerator extends OpenApiGenerator
     {
         $requestSchema = $endpoint->custom['dataRequestSchema'] ?? null;
         if ($requestSchema) {
-            $pathItem['requestBody']['content']['application/json']['schema'] = $this->operationSchema($requestSchema);
+            // A request DTO carrying an UploadedFile property surfaces as a
+            // `format: binary` leaf; such a body is a file upload and must be
+            // advertised as `multipart/form-data`, not `application/json`.
+            $contentType = $this->hasBinaryProperty($requestSchema)
+                ? 'multipart/form-data'
+                : 'application/json';
+            $pathItem['requestBody']['content'][$contentType]['schema'] = $this->operationSchema($requestSchema);
         }
 
         foreach ($endpoint->custom['dataResponseSchemas'] ?? [] as $response) {
@@ -61,6 +67,25 @@ class DataSchemaGenerator extends OpenApiGenerator
         }
 
         return $pathItem;
+    }
+
+    /**
+     * A request schema is a file upload when any top-level property (or its
+     * array items) is a `format: binary` leaf — the signal the Data→JSON-Schema
+     * generator emits for an UploadedFile-typed property.
+     */
+    protected function hasBinaryProperty(array $schema): bool
+    {
+        foreach ($schema['properties'] ?? [] as $property) {
+            if (($property['format'] ?? null) === 'binary') {
+                return true;
+            }
+            if (($property['items']['format'] ?? null) === 'binary') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
