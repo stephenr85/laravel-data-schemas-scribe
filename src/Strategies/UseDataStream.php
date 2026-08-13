@@ -4,10 +4,9 @@ namespace Rushing\LaravelDataSchemasScribe\Strategies;
 
 use Knuckles\Camel\Extraction\ExtractedEndpointData;
 use Knuckles\Scribe\Extracting\Strategies\PhpAttributeStrategy;
-use ReflectionClass;
 use Rushing\LaravelDataSchemasScribe\Attributes\StreamsFromData;
 use Rushing\LaravelDataSchemasScribe\OpenApi\DataSchemaGenerator;
-use Rushing\LaravelDataSchemasScribe\Support\SchemaExample;
+use Rushing\LaravelDataSchemasScribe\Support\StreamSchemas;
 use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
 use Spatie\LaravelData\Data;
 
@@ -65,34 +64,6 @@ class UseDataStream extends PhpAttributeStrategy
             return [];
         }
 
-        $generator = (new JsonSchemaGenerator)->forResponse();
-        $stash = [];
-        $frames = '';
-
-        foreach ($events as $event => $dataClasses) {
-            $schemas = array_map(
-                fn (string $dataClass) => $generator->generate(new ReflectionClass($dataClass)),
-                $dataClasses,
-            );
-
-            $stash[] = [
-                'event' => $event,
-                'schemas' => $schemas,
-                'description' => $descriptions[$event] ?? null,
-            ];
-
-            // One representative wire frame per event for the human-readable docs — the first
-            // variant's example; further variants are visible in the x-sse-events union.
-            $frames .= "event: {$event}\n"
-                .'data: '.json_encode(SchemaExample::build($schemas[0]))."\n\n";
-        }
-
-        $endpointData->custom['dataStreamSchemas'] = $stash;
-
-        return [[
-            'status' => 200,
-            'content' => rtrim($frames)."\n",
-            'description' => 'text/event-stream — a typed event sequence ('.implode(', ', array_keys($events)).'); see x-sse-events in the OpenAPI spec for the payload union.',
-        ]];
+        return StreamSchemas::stash($endpointData, $events, $descriptions);
     }
 }
