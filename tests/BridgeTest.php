@@ -6,12 +6,12 @@ use Knuckles\Camel\Extraction\ExtractedEndpointData;
 use Knuckles\Camel\Output\OutputEndpointData;
 use Knuckles\Scribe\Tools\DocumentationConfig;
 use ReflectionClass;
-use Rushing\LaravelDataSchemas\Generators\JsonSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\OpenApi\DataSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataRequest;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataResponse;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetController;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetData;
+use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
 
 class BridgeTest extends TestCase
 {

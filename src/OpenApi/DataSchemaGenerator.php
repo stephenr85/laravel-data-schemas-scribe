@@ -66,7 +66,46 @@ class DataSchemaGenerator extends OpenApiGenerator
             $pathItem['responses'][$status]['content']['application/json']['schema'] = $this->operationSchema($response['schema']);
         }
 
+        if ($streams = $endpoint->custom['dataStreamSchemas'] ?? null) {
+            // STRUCTURAL LIMIT (particle-doctrine-followups 14): OpenAPI 3.1 defines no per-event
+            // schema slot inside a `text/event-stream` body — that is AsyncAPI's territory. Rather
+            // than leave every SSE endpoint silently absent from the spec, the event union rides the
+            // `x-sse-events` vendor extension: wire event name → payload schema ($ref-rewritten, a
+            // oneOf when an event name covers several variants). Event names and payloads are IN the
+            // document — discoverable and diffable — just not in a natively-defined slot.
+            $pathItem['responses']['200']['content']['text/event-stream'] = [
+                'schema' => [
+                    'type' => 'string',
+                    'description' => 'A server-sent event stream; each `data:` line carries one of the payloads declared in `x-sse-events`.',
+                ],
+                'x-sse-events' => $this->sseEvents($streams),
+            ];
+        }
+
         return $pathItem;
+    }
+
+    /**
+     * The `x-sse-events` map: wire event name → `{ data, description? }`, `data` being the
+     * $ref-rewritten payload schema (a `oneOf` when the event name covers several variants).
+     *
+     * @param  array<int, array{event: string, schemas: array<int, array>, description: ?string}>  $streams
+     * @return array<string, array<string, mixed>>
+     */
+    protected function sseEvents(array $streams): array
+    {
+        $events = [];
+
+        foreach ($streams as $stream) {
+            $schemas = array_map(fn (array $schema) => $this->operationSchema($schema), $stream['schemas']);
+
+            $events[$stream['event']] = array_filter([
+                'data' => count($schemas) === 1 ? $schemas[0] : ['oneOf' => array_values($schemas)],
+                'description' => $stream['description'],
+            ], fn ($value) => $value !== null);
+        }
+
+        return $events;
     }
 
     /**
@@ -113,6 +152,12 @@ class DataSchemaGenerator extends OpenApiGenerator
 
         foreach ($endpoint->custom['dataResponseSchemas'] ?? [] as $response) {
             $schemas[] = $response['schema'];
+        }
+
+        foreach ($endpoint->custom['dataStreamSchemas'] ?? [] as $stream) {
+            foreach ($stream['schemas'] as $schema) {
+                $schemas[] = $schema;
+            }
         }
 
         return $schemas;
