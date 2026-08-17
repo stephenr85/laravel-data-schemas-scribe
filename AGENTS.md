@@ -1,11 +1,16 @@
 > You are in **rushing/laravel-data-schemas-scribe** — a Scribe bridge that drives request/response extraction from Laravel Data classes via `schemastud/laravel-data-schemas`.
 
-## Particle doctrine
+## The Data class is the only source
 
-Before adding or changing any I/O surface (HTTP route, MCP tool, Inertia page, command), read
-`splicewire/laravel-beam`'s `docs/agents/particle-doctrine.md` — the
-declare-every-boundary-crossing-shape invariant, its three declaration sites, the four exceptions,
-and `splicewire:beam:manifests --json` for locating the registry behind a surface.
+Every axis this bridge extracts comes from a declared Data class. There is no fallback path that
+reads a shape from an inline array or a runtime sample, and adding one would be a regression: the
+whole point is that the schema, the docs, and the generated client types derive from one declaration
+and therefore cannot disagree.
+
+Consumers may impose a stricter rule on top — a CMS runtime, for instance, requiring that every
+boundary-crossing shape be declared rather than inline, with its own registry and its own attributes
+for saying so. This bridge neither knows nor enforces that. It extracts what it is given, from the
+Data class it is pointed at.
 
 ## Parameter documentation
 
