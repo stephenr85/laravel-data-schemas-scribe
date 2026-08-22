@@ -10,12 +10,24 @@ policy.)
 | attribute | axis | what it drives |
 | --- | --- | --- |
 | `#[RequestFromData(SomeData::class)]` | request body | `requestBody.content.*.schema` |
+| `#[QueryFromData(SomeData::class)]` | query string | the `in: query` entries of `parameters` |
 | `#[ResponseFromData(SomeData::class, status: 200)]` | response | `responses.<status>.content.*.schema` |
 | `#[StreamsFromData(...)]` | SSE | the `x-sse-events` payload union |
 
 Each names a `Spatie\LaravelData\Data` subclass. `RequestFromData` and `ResponseFromData` may be
 omitted where the method signature already makes the class unambiguous — `UseDataRequest` falls back to
 the first typed `Data` parameter. Prefer the explicit attribute anyway: it survives a signature change.
+
+`QueryFromData` has **no** such fallback, on purpose: a route may carry a query DTO and a body DTO at
+once, and "the first typed `Data` parameter" would then document one axis as the other. It is also not
+repeatable — a route needing two shapes composes them into one class, where the schema can see the
+composition.
+
+These attributes **document** a contract; they do not bind it. The strategies reflect the named class
+and never hydrate it. Spatie *will* hydrate the same class from a GET query string — both
+`Data::from($request)` and handler injection read `$request->all()`, which merges the query string, and
+the casts turn the strings into typed properties (both paths are asserted in `QueryBridgeTest`) — so a
+host is free to make the documented class the real input contract. Nothing here checks that it did.
 
 ## Describing the properties
 
@@ -55,6 +67,13 @@ It does **not** own OpenAPI's `parameters` array. Anything documenting URL or qu
 flat parameters that reach the spec **verbatim**, so those strategies own their own type and example
 handling.
 
+That asymmetry is why `UseDataQuery` passes `dereference: true` to `ScribeBodyParameters::fromSchema()`
+and `UseDataRequest` does not. The generator hoists a backed enum into `$defs` and leaves the property
+as a bare `{$ref: …}` carrying no `type` of its own. On the body axis that is fine — the rich schema
+overwrites the flat output. On the query axis it is the published contract, so an undereferenced enum
+would ship as `type: object` with its value set dropped. Folding the def back in recovers the scalar
+type and the `enum` values.
+
 ## Examples: absent by design
 
 `JsonSchemaGenerator::inferExample()` deliberately emits **no** example for a bare-typed leaf. It is not
@@ -62,9 +81,19 @@ an oversight — a lone `examples` entry makes RJSF render a phantom `<datalist>
 be a plain input. Format- and enum-derived examples still come through; everything else is opt-in via
 `#[Example]`.
 
-Consequence for anyone writing a strategy in the flat-parameter axes: a null example is Scribe's cue to
-generate a faker value. Scribe's `'No-example'` sentinel suppresses that — but it is normalized in
+Consequence for anyone writing a strategy in the flat-parameter axes — **and an earlier draft of this
+section got it backwards, so it is stated here as measured rather than as remembered.**
+
+Returning `example => null` does **not** trigger faker. Faker fill is per-strategy, not generic:
+`Extractor` never synthesizes an example for a strategy's return, and every `generateDummyValue()` call
+site in Scribe sits inside a *specific* strategy (the tag strategies, `GetParamsFromAttributeStrategy`,
+the inline-validator path, `GetFromLaravelAPI` for URL params). What `null` actually buys is
+`Extractor::cleanParams()` dropping the parameter from the rendered *example request* while keeping it
+documented — the parameter stays in `parameters` with `example: null`.
+
+So the `'No-example'` sentinel is not the remedy here; it is the hazard. It is normalized in
 `GetParamsFromAttributeStrategy::normalizeParameterData()`, and `GetParamsFromAttributeStrategy extends
-PhpAttributeStrategy`, **not the reverse**. A strategy extending `PhpAttributeStrategy` directly (as the
-`UseData*` family does) does not inherit that handling and must do it itself, or the literal string
-`No-example` ships as the example.
+PhpAttributeStrategy`, **not the reverse** — so a strategy extending `PhpAttributeStrategy` directly (as
+the `UseData*` family does) does not inherit that handling, and returning the literal string ships
+`example: No-example` into the spec, which is worse than faker. `ScribeBodyParameters::fromSchema()`
+never emits it: absent `examples` becomes `null`, which is exactly what this axis wants.
