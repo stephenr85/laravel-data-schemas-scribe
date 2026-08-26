@@ -23,6 +23,10 @@ class WidgetController
     #[RequestFromData(WidgetData::class)]
     public function search(): void {}
 
+    /** A query DTO with no defaulted property — the mandatory-filter guard. */
+    #[QueryFromData(MandatoryFilterQueryData::class)]
+    public function mandatory(): void {}
+
     /** Neither axis declared. */
     public function untouched(): void {}
 }

@@ -37,13 +37,28 @@ class QueryBridgeTest extends TestCase
 
         $this->assertSame('integer', $params['page']['type']);
 
-        // Pinned as-is, NOT endorsed. `search` is `?string $search = null` and still lands in the
-        // schema's `required` list — only an `Optional` union (`status`) escapes it. That is ticket
-        // 31's defect reproduced at package level, and the query axis raises its stakes: every
-        // documented filter publishes as mandatory. Not fixed here; 31 owns the rule.
-        $this->assertTrue($params['search']['required']);
-        $this->assertTrue($params['page']['required']);
+        // A defaulted property is optional on the REQUEST axis, and `UseDataQuery` generates in
+        // request mode — so all three of these publish as optional. `search` and `page` are
+        // `?T $x = null`, `status` is an `Optional` union; none of them is a mandatory filter.
+        $this->assertFalse($params['search']['required']);
+        $this->assertFalse($params['page']['required']);
         $this->assertFalse($params['status']['required']);
+    }
+
+    /**
+     * The other side of the same rule. Dropping DEFAULTED properties from `required` is not the same
+     * as dropping nullable ones: a `?string $region` with no default is still mandatory, and a form
+     * layer that relaxes on nullability rather than on has-default gets exactly this case backwards.
+     */
+    public function test_a_query_property_without_a_default_stays_required(): void
+    {
+        $endpointData = $this->endpoint('mandatory');
+
+        $params = (new UseDataQuery(new DocumentationConfig([])))($endpointData);
+
+        $this->assertTrue($params['tenant']['required']);
+        $this->assertTrue($params['region']['required']);
+        $this->assertTrue($params['region']['nullable']);
     }
 
     /**
