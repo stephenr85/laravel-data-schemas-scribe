@@ -27,7 +27,7 @@ class StreamSchemas
      */
     public static function stash(ExtractedEndpointData $endpointData, array $events, array $descriptions = []): array
     {
-        $generator = (new JsonSchemaGenerator)->forResponse();
+        $generator = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forResponse();
         $stash = [];
         $frames = '';
 

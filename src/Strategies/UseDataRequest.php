@@ -40,7 +40,7 @@ class UseDataRequest extends PhpAttributeStrategy
             return [];
         }
 
-        $schema = (new JsonSchemaGenerator)->forRequest()->generate(new ReflectionClass($dataClass));
+        $schema = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forRequest()->generate(new ReflectionClass($dataClass));
 
         $endpointData->custom['dataRequestSchema'] = $schema;
 

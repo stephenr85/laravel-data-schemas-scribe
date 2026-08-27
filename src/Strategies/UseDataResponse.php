@@ -44,7 +44,7 @@ class UseDataResponse extends PhpAttributeStrategy
             return [];
         }
 
-        $generator = (new JsonSchemaGenerator)->forResponse();
+        $generator = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forResponse();
         $stash = [];
         $responses = [];
 
