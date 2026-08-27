@@ -11,7 +11,7 @@ use Rushing\LaravelDataSchemasScribe\Strategies\UseDataRequest;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataResponse;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetController;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetData;
-use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
+use Schemastud\DataSchemas\Generators\Generator;
 
 class BridgeTest extends TestCase
 {
@@ -56,7 +56,21 @@ class BridgeTest extends TestCase
 
     public function test_openapi_hook_injects_components_and_rewrites_refs(): void
     {
-        $schema = (new JsonSchemaGenerator)->generate(new ReflectionClass(WidgetData::class));
+        // The subject here is DataSchemaGenerator, the OpenAPI hook — the JSON Schema is only its
+        // INPUT. Building it bare fed the hook a document no host produces: a bare generator takes
+        // no config, so it emits neither `$schema` nor `$id`, while the strategies in `src/` build
+        // theirs from `config('data-schemas')` and a real extraction run therefore hands the hook
+        // both. Resolving through the container closes that gap, so the fixture is the shape the
+        // hook actually meets.
+        $generator = app(Generator::class);
+        $reflection = new ReflectionClass(WidgetData::class);
+
+        // Asserted rather than assumed: ChainedGenerator::generate() THROWS when no configured
+        // generator accepts the class, where the bare generator this replaced generated regardless.
+        $this->assertTrue($generator->canGenerate($reflection));
+
+        $schema = $generator->generate($reflection);
+        $this->assertArrayHasKey('$id', $schema);
 
         $endpoint = OutputEndpointData::create([
             'httpMethods' => ['POST'],
@@ -88,6 +102,12 @@ class BridgeTest extends TestCase
         $requestSchema = $pathItem['requestBody']['content']['application/json']['schema'];
         $this->assertArrayNotHasKey('$defs', $requestSchema);
         $this->assertSame('#/components/schemas/WidgetStatus', $requestSchema['properties']['status']['$ref']);
+
+        // An embedded subschema carries no document identity. `$id` is relative whenever the host
+        // leaves `base_uri` unset, and a relative `$id` re-bases the fragment `$ref` on the line
+        // above. Only reachable as an assertion because the fixture above is now host-shaped.
+        $this->assertArrayNotHasKey('$id', $requestSchema);
+        $this->assertArrayNotHasKey('$schema', $requestSchema);
 
         $responseSchema = $pathItem['responses']['200']['content']['application/json']['schema'];
         $this->assertSame('#/components/schemas/OwnerData', $responseSchema['properties']['owner']['$ref']);

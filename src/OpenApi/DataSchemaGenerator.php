@@ -129,12 +129,27 @@ class DataSchemaGenerator extends OpenApiGenerator
 
     /**
      * The per-operation schema: refs rewritten to components, $defs stripped
-     * (they live globally in components/schemas).
+     * (they live globally in components/schemas), and the document-identity
+     * keywords dropped.
+     *
+     * `$id` and `$schema` are properties of a STANDALONE schema document, and what this returns is
+     * an EMBEDDED subschema — the object OpenAPI inlines at
+     * `requestBody.content.<type>.schema`. Carrying them down is not merely untidy:
+     * `JsonSchemaGenerator` mints a RELATIVE `$id` (`"WidgetData"`) whenever the host leaves
+     * `data-schemas.base_uri` unset, and a relative `$id` on an embedded subschema RE-BASES `$ref`
+     * resolution inside it. The sibling refs this very method rewrites are same-document fragments
+     * (`#/components/schemas/WidgetStatus`), so a strict 2020-12 resolver would look for them
+     * against `.../WidgetData` instead of the OpenAPI document — resolving to nothing.
+     *
+     * This was invisible for as long as the only test fed the hook a schema from a BARE
+     * `new JsonSchemaGenerator`, which takes no config and therefore emits neither keyword. The
+     * strategies in `src/Strategies` have always built theirs from `config('data-schemas')`, so a
+     * real extraction run has always produced both — the fixture was the only thing that did not.
      */
     protected function operationSchema(array $schema): array
     {
         $converted = OpenApi::toOpenApiComponents($schema);
-        unset($converted['components']);
+        unset($converted['components'], $converted['$id'], $converted['$schema']);
 
         return $converted;
     }
