@@ -7,7 +7,7 @@ use Knuckles\Scribe\Extracting\Strategies\PhpAttributeStrategy;
 use Rushing\LaravelDataSchemasScribe\Attributes\StreamsFromData;
 use Rushing\LaravelDataSchemasScribe\OpenApi\DataSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Support\StreamSchemas;
-use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
+use Schemastud\DataSchemas\Generators\Generator;
 use Spatie\LaravelData\Data;
 
 /**
@@ -18,7 +18,7 @@ use Spatie\LaravelData\Data;
  * Merges repeated same-named declarations append-and-dedupe in declaration order (the attribute's
  * documented consumer convention — the exact loop `RouteReturnType::reflectDeclarations()` runs for the
  * TS manifest, so the spec and the client cannot disagree about an event union). Each event payload
- * class is generated through the SAME {@see JsonSchemaGenerator} the response strategies use, stashed
+ * class is generated through the SAME host-configured {@see Generator} chain the response strategies use, stashed
  * under `custom['dataStreamSchemas']` for {@see DataSchemaGenerator},
  * and rendered for HTML/Postman as one representative SSE frame per event.
  *

@@ -7,9 +7,9 @@ use Knuckles\Scribe\Extracting\Strategies\PhpAttributeStrategy;
 use ReflectionClass;
 use ReflectionFunctionAbstract;
 use ReflectionNamedType;
-use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Attributes\RequestFromData;
 use Rushing\LaravelDataSchemasScribe\Support\ScribeBodyParameters;
+use Schemastud\DataSchemas\Generators\Generator;
 use Spatie\LaravelData\Data;
 
 /**
@@ -40,7 +40,29 @@ class UseDataRequest extends PhpAttributeStrategy
             return [];
         }
 
-        $schema = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forRequest()->generate(new ReflectionClass($dataClass));
+        // Through the container, not `new JsonSchemaGenerator(config('data-schemas', []))`. That
+        // construction was already correct on CONFIG (a6989da); what it still could not do is
+        // dispatch. `data-schemas.generators` is a LIST, and the rule "the first member whose
+        // `canGenerate()` accepts this class" lives only inside {@see ChainedGenerator} — so at
+        // `~/Herd/thingsontv`, whose list is `[BlockJsonSchemaGenerator, JsonSchemaGenerator]`,
+        // hand-building the default one runs the PLAIN generator over a `Block` subclass and
+        // silently drops its `#[NodeType]`/`#[NodeAttr]` bridging.
+        //
+        // GUARDED, and here the guard is load-bearing rather than defensive. The chain THROWS where
+        // the hand-built generator generated regardless, and a throw raised inside a Scribe strategy
+        // is not loud: Scribe catches per-route, prints only under `-v`, and carries on — the
+        // endpoint simply VANISHES from the spec. That is the same silent amputation a6989da was
+        // written to remove, so refusal degrades to this strategy's own existing
+        // "nothing to contribute" answer, which leaves the endpoint documented without a body
+        // rather than deleting it outright.
+        $reflection = new ReflectionClass($dataClass);
+        $generator = app(Generator::class)->forRequest();
+
+        if (! $generator->canGenerate($reflection)) {
+            return [];
+        }
+
+        $schema = $generator->generate($reflection);
 
         $endpointData->custom['dataRequestSchema'] = $schema;
 

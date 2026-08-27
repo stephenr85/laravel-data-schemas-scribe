@@ -5,7 +5,7 @@ namespace Rushing\LaravelDataSchemasScribe\Support;
 use Knuckles\Camel\Extraction\ExtractedEndpointData;
 use ReflectionClass;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataStream;
-use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
+use Schemastud\DataSchemas\Generators\Generator;
 use Spatie\LaravelData\Data;
 
 /**
@@ -27,7 +27,10 @@ class StreamSchemas
      */
     public static function stash(ExtractedEndpointData $endpointData, array $events, array $descriptions = []): array
     {
-        $generator = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forResponse();
+        // Container-resolved for chain dispatch, and resolved once then moded once — every mode call
+        // clones, so nothing here mutates a shared instance. See {@see UseDataRequest} for why the
+        // per-class `canGenerate()` guard below is not optional inside a Scribe strategy.
+        $generator = app(Generator::class)->forResponse();
         $stash = [];
         $frames = '';
 
@@ -35,8 +38,17 @@ class StreamSchemas
             $schemas = [];
 
             foreach ($dataClasses as $dataClass) {
-                if (is_subclass_of($dataClass, Data::class)) {
-                    $schemas[] = $generator->generate(new ReflectionClass($dataClass));
+                if (! is_subclass_of($dataClass, Data::class)) {
+                    continue;
+                }
+
+                // A payload the chain refuses drops out of its event's variant union, exactly as a
+                // non-Data payload already does; an event left with no variants is skipped by the
+                // `$schemas === []` branch below.
+                $reflection = new ReflectionClass($dataClass);
+
+                if ($generator->canGenerate($reflection)) {
+                    $schemas[] = $generator->generate($reflection);
                 }
             }
 

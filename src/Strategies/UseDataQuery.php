@@ -8,7 +8,7 @@ use ReflectionClass;
 use Rushing\LaravelDataSchemasScribe\Attributes\QueryFromData;
 use Rushing\LaravelDataSchemasScribe\OpenApi\DataSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Support\ScribeBodyParameters;
-use Schemastud\DataSchemas\Generators\JsonSchemaGenerator;
+use Schemastud\DataSchemas\Generators\Generator;
 use Spatie\LaravelData\Data;
 
 /**
@@ -57,7 +57,18 @@ class UseDataQuery extends PhpAttributeStrategy
             return [];
         }
 
-        $schema = (new JsonSchemaGenerator((array) config('data-schemas', [])))->forRequest()->generate(new ReflectionClass($dataClass));
+        // Container-resolved for the chain, guarded because the chain throws — see the long note on
+        // the sibling {@see UseDataRequest}. The stakes are marginally higher on this axis: a
+        // refusal that vanished the endpoint would take the whole `parameters` array with it, and
+        // this strategy's flat return IS the published contract rather than HTML dressing.
+        $reflection = new ReflectionClass($dataClass);
+        $generator = app(Generator::class)->forRequest();
+
+        if (! $generator->canGenerate($reflection)) {
+            return [];
+        }
+
+        $schema = $generator->generate($reflection);
 
         $endpointData->custom['dataQuerySchema'] = $schema;
 
