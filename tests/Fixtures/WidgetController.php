@@ -27,6 +27,10 @@ class WidgetController
     #[QueryFromData(MandatoryFilterQueryData::class)]
     public function mandatory(): void {}
 
+    /** A query DTO whose properties declare non-null defaults — ticket 119's axis. */
+    #[QueryFromData(DefaultedQueryData::class)]
+    public function defaulted(): void {}
+
     /** Neither axis declared. */
     public function untouched(): void {}
 }

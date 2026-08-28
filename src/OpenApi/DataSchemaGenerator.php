@@ -82,6 +82,78 @@ class DataSchemaGenerator extends OpenApiGenerator
             ];
         }
 
+        // The QUERY axis. `UseDataQuery` already stashed the generator schema the parameters were
+        // flattened out of; this is the only place a keyword Scribe's `Parameter` cannot hold can be
+        // put back on them. See applyQueryDefaults().
+        if ($querySchema = $endpoint->custom['dataQuerySchema'] ?? null) {
+            $pathItem = $this->applyQueryDefaults($pathItem, $querySchema);
+        }
+
+        return $pathItem;
+    }
+
+    /**
+     * Put each query parameter's declared `default` onto its `schema.default`
+     * (api-surface-coherence ticket 119).
+     *
+     * ## Why this cannot be fixed upstream, in the flat parameter shape
+     *
+     * `ScribeBodyParameters::fromSchema()` builds the same array on both axes, so a `default` key set
+     * there would look symmetric — and be discarded. Scribe hydrates that array into
+     * `Knuckles\Camel\Extraction\Parameter`, whose `BaseDTO` constructor assigns only keys for which
+     * `property_exists()`; the class declares no `default` property, so the key is dropped before
+     * `BaseGenerator::queryParamToOpenApiParameterObject()` ever sees it, and that method's
+     * `generateFieldData()` builds a closed field shape with no `default` slot either. The flat shape
+     * is not a lossy transport here, it is a closed one — so the keyword is re-read from the stashed
+     * source schema rather than carried through a key that is dead at its own consumer.
+     *
+     * ## Why it lives on THIS generator rather than a third one
+     *
+     * `dataQuerySchema` is this package's stash, written by this package's strategy, and until now read
+     * by nothing. A separate generator would have to be registered in every host's `scribe.generators`
+     * config by hand — a config edit in every consuming app to fix a defect in this package. Extending
+     * the hook the package already ships costs no host any change. It is the same shape
+     * `RenderingDeliveryGenerator` (beam, ticket 32 §C) settled on: one document-assembly hook per
+     * package, writing responses AND a parameter default, because the parameter default has nowhere
+     * else to be written.
+     *
+     * PATH parameters are deliberately not touched — see the note in the query-axis test.
+     *
+     * @param  array<string, mixed>  $pathItem
+     * @param  array<string, mixed>  $schema  the stashed generator schema
+     * @return array<string, mixed>
+     */
+    protected function applyQueryDefaults(array $pathItem, array $schema): array
+    {
+        $defaults = [];
+
+        // Keyed by the schema's own property key — which is the WIRE name (`JsonSchemaGenerator`
+        // projects it, and emits `default` under that same key), and the wire name is what
+        // `ScribeBodyParameters` published as the parameter name. The two agree by construction.
+        foreach ($schema['properties'] ?? [] as $name => $property) {
+            if (is_array($property) && array_key_exists('default', $property)) {
+                $defaults[$name] = $property['default'];
+            }
+        }
+
+        if ($defaults === []) {
+            return $pathItem;
+        }
+
+        foreach ($pathItem['parameters'] ?? [] as $index => $parameter) {
+            $name = $parameter['name'] ?? null;
+
+            // `in` is asserted rather than assumed: this same array also carries the endpoint's
+            // headers, and a header sharing a query parameter's name must not inherit its default.
+            if (($parameter['in'] ?? null) !== 'query' || ! is_string($name)) {
+                continue;
+            }
+
+            if (array_key_exists($name, $defaults)) {
+                $pathItem['parameters'][$index]['schema']['default'] = $defaults[$name];
+            }
+        }
+
         return $pathItem;
     }
 
