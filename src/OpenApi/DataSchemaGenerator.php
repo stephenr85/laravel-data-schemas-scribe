@@ -2,6 +2,7 @@
 
 namespace Rushing\LaravelDataSchemasScribe\OpenApi;
 
+use InvalidArgumentException;
 use Knuckles\Camel\Output\OutputEndpointData;
 use Knuckles\Scribe\Writing\OpenApiSpecGenerators\OpenApiGenerator;
 use Schemastud\DataSchemas\Support\OpenApi;
@@ -24,20 +25,34 @@ class DataSchemaGenerator extends OpenApiGenerator
         // arrays for null, examples) — i.e. OpenAPI 3.1, not Scribe's default 3.0.3.
         $root['openapi'] = '3.1.0';
 
-        $schemas = [];
+        $existing = $root['components']['schemas'] ?? [];
+        $schemas = OpenApi::toOpenApiComponents(['$defs' => $existing])['components']['schemas'] ?? [];
+        $identities = [];
+        foreach ($existing as $name => $definition) {
+            $identities[OpenApi::componentName((string) $name, $definition)] = $definition['$id'] ?? null;
+        }
 
         foreach ($groupedEndpoints as $group) {
             foreach ($group['endpoints'] as $endpoint) {
                 foreach ($this->endpointSchemas($endpoint) as $schema) {
                     $converted = OpenApi::toOpenApiComponents($schema);
-                    $schemas = array_merge($schemas, $converted['components']['schemas'] ?? []);
+                    foreach ($schema['$defs'] ?? [] as $name => $definition) {
+                        $component = OpenApi::componentName((string) $name, $definition);
+                        $identity = $definition['$id'] ?? $name;
+                        $body = $converted['components']['schemas'][$component];
+                        if (isset($schemas[$component]) && (($identities[$component] !== null && $identities[$component] !== $identity) || $schemas[$component] != $body)) {
+                            throw new InvalidArgumentException("OpenAPI component name collision [{$component}].");
+                        }
+                        $identities[$component] = $identity;
+                        $schemas[$component] = $body;
+                    }
                 }
             }
         }
 
         if (! empty($schemas)) {
             $root['components'] ??= [];
-            $root['components']['schemas'] = array_merge($root['components']['schemas'] ?? [], $schemas);
+            $root['components']['schemas'] = $schemas;
         }
 
         return $root;
