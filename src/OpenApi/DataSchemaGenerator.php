@@ -58,6 +58,20 @@ class DataSchemaGenerator extends OpenApiGenerator
         return $root;
     }
 
+    /** Preserve finite path vocabularies that Scribe's base writer omits. */
+    public function pathParameters(array $parameters, array $endpoints, array $urlParameters): array
+    {
+        foreach ($parameters as $index => $parameter) {
+            $name = $parameter['name'] ?? $index;
+            $values = $urlParameters[$name]->enumValues ?? [];
+            if ($values !== []) {
+                $parameters[$index]['schema']['enum'] = array_values($values);
+            }
+        }
+
+        return $parameters;
+    }
+
     /**
      * Scribe passes the bare operation object here (keys like `requestBody`,
      * `responses`), not a method-keyed map — it wraps the result under the HTTP
@@ -99,17 +113,40 @@ class DataSchemaGenerator extends OpenApiGenerator
 
         // The QUERY axis. `UseDataQuery` already stashed the generator schema the parameters were
         // flattened out of; this is the only place a keyword Scribe's `Parameter` cannot hold can be
-        // put back on them. See applyQueryDefaults().
+        // put back on them. See applyQuerySchemaConstraints().
         if ($querySchema = $endpoint->custom['dataQuerySchema'] ?? null) {
-            $pathItem = $this->applyQueryDefaults($pathItem, $querySchema);
+            $pathItem = $this->applyQuerySchemaConstraints($pathItem, $querySchema);
+        }
+
+        // Full path schemas are carried separately because Parameter cannot express an empty
+        // vocabulary. Per-operation overrides also preserve different constraints on shared paths.
+        foreach ($endpoint->custom['dataPathParameterSchemas'] ?? [] as $name => $schema) {
+            $parameter = $endpoint->urlParameters[$name] ?? null;
+            if ($parameter === null) {
+                continue;
+            }
+
+            $pathItem['parameters'] ??= [];
+            $pathItem['parameters'] = array_values(array_filter(
+                $pathItem['parameters'],
+                fn (array $existing): bool => ($existing['in'] ?? null) !== 'path' || ($existing['name'] ?? null) !== $name,
+            ));
+            $pathItem['parameters'][] = [
+                'in' => 'path',
+                'name' => $name,
+                'required' => true,
+                'description' => $parameter->description,
+                'schema' => $schema,
+                ...($parameter->example === null ? [] : ['example' => $parameter->example]),
+            ];
         }
 
         return $pathItem;
     }
 
     /**
-     * Put each query parameter's declared `default` onto its `schema.default`
-     * (api-surface-coherence ticket 119).
+     * Restore query schema keywords the flat parameter shape cannot carry: declared `default`
+     * (api-surface-coherence ticket 119) and `not`, including an empty registry vocabulary.
      *
      * ## Why this cannot be fixed upstream, in the flat parameter shape
      *
@@ -132,15 +169,16 @@ class DataSchemaGenerator extends OpenApiGenerator
      * package, writing responses AND a parameter default, because the parameter default has nowhere
      * else to be written.
      *
-     * PATH parameters are deliberately not touched — see the note in the query-axis test.
+     * This helper touches query parameters only; path schemas are restored separately in pathItem().
      *
      * @param  array<string, mixed>  $pathItem
      * @param  array<string, mixed>  $schema  the stashed generator schema
      * @return array<string, mixed>
      */
-    protected function applyQueryDefaults(array $pathItem, array $schema): array
+    protected function applyQuerySchemaConstraints(array $pathItem, array $schema): array
     {
         $defaults = [];
+        $constraints = [];
 
         // Keyed by the schema's own property key — which is the WIRE name (`JsonSchemaGenerator`
         // projects it, and emits `default` under that same key), and the wire name is what
@@ -149,9 +187,12 @@ class DataSchemaGenerator extends OpenApiGenerator
             if (is_array($property) && array_key_exists('default', $property)) {
                 $defaults[$name] = $property['default'];
             }
+            if (is_array($property) && array_key_exists('not', $property)) {
+                $constraints[$name] = $property['not'];
+            }
         }
 
-        if ($defaults === []) {
+        if ($defaults === [] && $constraints === []) {
             return $pathItem;
         }
 
@@ -166,6 +207,9 @@ class DataSchemaGenerator extends OpenApiGenerator
 
             if (array_key_exists($name, $defaults)) {
                 $pathItem['parameters'][$index]['schema']['default'] = $defaults[$name];
+            }
+            if (array_key_exists($name, $constraints)) {
+                $pathItem['parameters'][$index]['schema']['not'] = $constraints[$name];
             }
         }
 

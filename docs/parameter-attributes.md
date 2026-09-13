@@ -63,16 +63,28 @@ two axes:
   Scribe's HTML and Postman surfaces, **not** the OpenAPI file. If a host doesn't ship those surfaces,
   it is dead weight there.
 
-It does **not** own OpenAPI's `parameters` array. Anything documenting URL or query parameters returns
-flat parameters that reach the spec **verbatim**, so those strategies own their own type and example
-handling.
+URL and query strategies still own their flat parameters' types, descriptions and examples. The
+bridge also restores schema information that Scribe's flat parameter model or base writer drops:
+
+- `pathParameters()` preserves non-empty `enumValues` as a path parameter's `schema.enum`.
+- A path strategy can stash complete schemas by wire parameter name in
+  `custom['dataPathParameterSchemas']`. `pathItem()` writes these as operation-level path parameters,
+  preserving constraints that differ between operations sharing a path. An empty vocabulary uses
+  `not: {}` rather than omitting the constraint and accepting any value.
+- `UseDataQuery` stashes the source schema in `custom['dataQuerySchema']`.
+  `applyQuerySchemaConstraints()` restores each query property's `default` and `not` keywords onto
+  the matching query parameter schema. It leaves headers and path parameters alone.
+
+These restorations do not infer parameter types or examples. A complete path schema replaces the
+schema for that operation's parameter, while its description and optional example come from the
+extracted parameter. Query parameters retain the flat strategy's type and enum projection.
 
 That asymmetry is why `UseDataQuery` passes `dereference: true` to `ScribeBodyParameters::fromSchema()`
 and `UseDataRequest` does not. The generator hoists a backed enum into `$defs` and leaves the property
 as a bare `{$ref: …}` carrying no `type` of its own. On the body axis that is fine — the rich schema
-overwrites the flat output. On the query axis it is the published contract, so an undereferenced enum
-would ship as `type: object` with its value set dropped. Folding the def back in recovers the scalar
-type and the `enum` values.
+overwrites the flat output. On the query axis that flat type and enum projection reaches the published
+contract, so an undereferenced enum would ship as `type: object` with its value set dropped. Folding
+the def back in recovers the scalar type and the `enum` values.
 
 ## Examples: absent by design
 
