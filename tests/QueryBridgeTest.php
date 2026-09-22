@@ -9,12 +9,49 @@ use Knuckles\Scribe\Tools\DocumentationConfig;
 use Rushing\LaravelDataSchemasScribe\OpenApi\DataSchemaGenerator;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataQuery;
 use Rushing\LaravelDataSchemasScribe\Strategies\UseDataRequest;
+use Rushing\LaravelDataSchemasScribe\Support\ScribeBodyParameters;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetController;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetQueryData;
 use Rushing\LaravelDataSchemasScribe\Tests\Fixtures\WidgetStatus;
 
 class QueryBridgeTest extends TestCase
 {
+    public function test_a_null_first_wrapper_preserves_the_single_value_type_and_vocabulary(): void
+    {
+        $schema = [
+            'properties' => ['status' => ['anyOf' => [
+                ['type' => 'null'], ['$ref' => '#/$defs/Status'],
+            ]]],
+            '$defs' => ['Status' => ['type' => 'integer', 'enum' => [1, 2]]],
+        ];
+        $before = $schema;
+        $parameter = ScribeBodyParameters::fromSchema($schema, dereference: true)['status'];
+        $this->assertSame('integer', $parameter['type']);
+        $this->assertSame([1, 2], $parameter['enumValues']);
+        $this->assertTrue($parameter['nullable']);
+        $this->assertSame($before, $schema);
+    }
+
+    public function test_a_wider_union_is_not_replaced_by_its_first_referenced_alternative(): void
+    {
+        $schema = [
+            'properties' => ['choice' => ['anyOf' => [
+                ['$ref' => '#/$defs/Count'], ['$ref' => '#/$defs/Enabled'], ['type' => 'null'],
+            ]]],
+            '$defs' => [
+                'Count' => ['type' => 'integer', 'enum' => [1, 2]],
+                'Enabled' => ['type' => 'boolean', 'enum' => [true]],
+            ],
+        ];
+        $before = $schema;
+        $parameter = ScribeBodyParameters::fromSchema($schema, dereference: true)['choice'];
+        $this->assertNotSame('integer', $parameter['type']);
+        $this->assertNotSame('boolean', $parameter['type']);
+        $this->assertArrayNotHasKey('enumValues', $parameter);
+        $this->assertTrue($parameter['nullable']);
+        $this->assertSame($before, $schema);
+    }
+
     private function endpoint(string $method): ExtractedEndpointData
     {
         $route = $this->app['router']->get('widgets', [WidgetController::class, $method]);
@@ -82,8 +119,13 @@ class QueryBridgeTest extends TestCase
      */
     public function test_an_enum_property_is_dereferenced_to_its_scalar_type_and_values(): void
     {
-        $params = (new UseDataQuery(new DocumentationConfig([])))($this->endpoint('index'));
+        $endpoint = $this->endpoint('index');
+        $params = (new UseDataQuery(new DocumentationConfig([])))($endpoint);
 
+        $this->assertSame([
+            ['$ref' => '#/$defs/WidgetStatus'],
+            ['type' => 'null'],
+        ], $endpoint->custom['dataQuerySchema']['properties']['status']['anyOf']);
         $this->assertSame('string', $params['status']['type']);
         $this->assertSame(['on', 'off'], $params['status']['enumValues']);
         $this->assertSame('Only widgets in this state.', $params['status']['description']);

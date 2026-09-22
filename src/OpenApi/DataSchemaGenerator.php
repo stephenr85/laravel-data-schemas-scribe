@@ -146,7 +146,7 @@ class DataSchemaGenerator extends OpenApiGenerator
 
     /**
      * Restore query schema keywords the flat parameter shape cannot carry: declared `default`
-     * (api-surface-coherence ticket 119) and `not`, including an empty registry vocabulary.
+     * (api-surface-coherence ticket 119) and `not`, including an empty registry vocabulary, plus numeric `minimum`/`maximum`.
      *
      * ## Why this cannot be fixed upstream, in the flat parameter shape
      *
@@ -177,39 +177,27 @@ class DataSchemaGenerator extends OpenApiGenerator
      */
     protected function applyQuerySchemaConstraints(array $pathItem, array $schema): array
     {
-        $defaults = [];
         $constraints = [];
 
-        // Keyed by the schema's own property key — which is the WIRE name (`JsonSchemaGenerator`
-        // projects it, and emits `default` under that same key), and the wire name is what
-        // `ScribeBodyParameters` published as the parameter name. The two agree by construction.
+        // Source properties and extracted parameter names share the declared wire name.
         foreach ($schema['properties'] ?? [] as $name => $property) {
-            if (is_array($property) && array_key_exists('default', $property)) {
-                $defaults[$name] = $property['default'];
+            if (is_array($property)) {
+                $constraints[$name] = array_intersect_key($property, array_flip([
+                    'default', 'not', 'minimum', 'maximum',
+                ]));
             }
-            if (is_array($property) && array_key_exists('not', $property)) {
-                $constraints[$name] = $property['not'];
-            }
-        }
-
-        if ($defaults === [] && $constraints === []) {
-            return $pathItem;
         }
 
         foreach ($pathItem['parameters'] ?? [] as $index => $parameter) {
             $name = $parameter['name'] ?? null;
 
-            // `in` is asserted rather than assumed: this same array also carries the endpoint's
-            // headers, and a header sharing a query parameter's name must not inherit its default.
+            // Headers and path parameters can share a query property's name without its constraints.
             if (($parameter['in'] ?? null) !== 'query' || ! is_string($name)) {
                 continue;
             }
 
-            if (array_key_exists($name, $defaults)) {
-                $pathItem['parameters'][$index]['schema']['default'] = $defaults[$name];
-            }
-            if (array_key_exists($name, $constraints)) {
-                $pathItem['parameters'][$index]['schema']['not'] = $constraints[$name];
+            foreach ($constraints[$name] ?? [] as $keyword => $value) {
+                $pathItem['parameters'][$index]['schema'][$keyword] = $value;
             }
         }
 

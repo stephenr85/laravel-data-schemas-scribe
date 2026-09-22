@@ -70,12 +70,7 @@ class ScribeBodyParameters
         $ref = $property['$ref'] ?? null;
 
         if ($ref === null) {
-            foreach ($property['anyOf'] ?? [] as $member) {
-                if (isset($member['$ref'])) {
-                    $ref = $member['$ref'];
-                    break;
-                }
-            }
+            $ref = self::nullableAlternative($property)['$ref'] ?? null;
         }
 
         if (! is_string($ref) || ! str_starts_with($ref, '#/$defs/')) {
@@ -88,8 +83,8 @@ class ScribeBodyParameters
             return $property;
         }
 
-        // The property's own keywords (description, nullable) win over the def's; the pointer itself
-        // must go, or `scribeType()` still sees a `$ref` and calls the folded enum an object.
+        // The definition supplies its scalar type and enum. The flat builder reads description and
+        // nullability from the original property; remove the resolved pointer and nullable wrapper.
         $resolved = $def + $property;
         unset($resolved['$ref'], $resolved['anyOf'], $resolved['title']);
 
@@ -98,6 +93,10 @@ class ScribeBodyParameters
 
     protected static function scribeType(array $property): string
     {
+        if (($alternative = self::nullableAlternative($property)) !== null) {
+            return self::scribeType($alternative);
+        }
+
         if (isset($property['$ref'])) {
             return 'object';
         }
@@ -131,6 +130,32 @@ class ScribeBodyParameters
 
         $type = $property['type'] ?? null;
 
-        return is_array($type) && in_array('null', $type, true);
+        if ($type === 'null' || (is_array($type) && in_array('null', $type, true))) {
+            return true;
+        }
+
+        foreach ($property['anyOf'] ?? [] as $member) {
+            if (self::isNullable($member)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** A nullable wrapper has exactly one value alternative; a wider union stays intact. */
+    private static function nullableAlternative(array $property): ?array
+    {
+        $members = $property['anyOf'] ?? [];
+        if (count($members) !== 2) {
+            return null;
+        }
+        foreach ($members as $index => $member) {
+            if (($member['type'] ?? null) === 'null') {
+                return $members[1 - $index];
+            }
+        }
+
+        return null;
     }
 }

@@ -3,6 +3,9 @@
 namespace Rushing\LaravelDataSchemasScribe\Tests\Fixtures;
 
 use Schemastud\DataSchemas\Attributes\Description;
+use Spatie\LaravelData\Attributes\MapInputName;
+use Spatie\LaravelData\Attributes\Validation\Max;
+use Spatie\LaravelData\Attributes\Validation\Min;
 use Spatie\LaravelData\Data;
 
 /**
@@ -12,15 +15,17 @@ use Spatie\LaravelData\Data;
  * `JsonSchemaGenerator::declaredDefault()` suppresses a null default outright (ticket 72 Q2), so it
  * publishes no `default` keyword at all and would assert nothing.
  *
- * The four properties are the four cases the emit has to get right on this axis:
+ * The defaulted properties cover the cases the emit has to get right on this axis:
  * a plain scalar, a FALSY scalar (the sentinel trap), a backed enum sitting behind a `$ref`, and a
  * null default that must stay absent.
  */
 class DefaultedQueryData extends Data
 {
     public function __construct(
-        #[Description('Page of results to return.')]
+        #[Description('Page of results to return.'), Min(0), Max(10)]
         public int $page = 1,
+        #[Description('Maximum rows per page.'), MapInputName('per_page'), Min(1), Max(100)]
+        public int $perPage = 25,
         // `false` is a declared default and must publish. A `?:`-style truthiness check anywhere on
         // the path loses it, and the parameter then documents as having no default at all.
         #[Description('Include archived widgets.')]

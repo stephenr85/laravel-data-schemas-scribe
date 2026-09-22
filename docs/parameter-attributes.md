@@ -72,8 +72,9 @@ bridge also restores schema information that Scribe's flat parameter model or ba
   preserving constraints that differ between operations sharing a path. An empty vocabulary uses
   `not: {}` rather than omitting the constraint and accepting any value.
 - `UseDataQuery` stashes the source schema in `custom['dataQuerySchema']`.
-  `applyQuerySchemaConstraints()` restores each query property's `default` and `not` keywords onto
-  the matching query parameter schema. It leaves headers and path parameters alone.
+  `applyQuerySchemaConstraints()` restores each query property's `default`, `not`, `minimum` and
+  `maximum` keywords onto the matching query parameter schema using its declared wire name. It
+  leaves headers and path parameters alone.
 
 These restorations do not infer parameter types or examples. A complete path schema replaces the
 schema for that operation's parameter, while its description and optional example come from the

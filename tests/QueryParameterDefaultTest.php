@@ -28,6 +28,38 @@ use Schemastud\DataSchemas\Generators\Generator;
  */
 class QueryParameterDefaultTest extends TestCase
 {
+    public function test_declared_numeric_bounds_survive_the_real_query_writing_pipeline(): void
+    {
+        $pathItem = $this->pathItem('defaulted');
+        $page = $this->parameter($pathItem, 'page')['schema'];
+        $this->assertSame(0, $page['minimum'] ?? null);
+        $this->assertSame(10, $page['maximum'] ?? null);
+        $size = $this->parameter($pathItem, 'per_page')['schema'];
+        $this->assertSame(1, $size['minimum'] ?? null);
+        $this->assertSame(100, $size['maximum'] ?? null);
+        $this->assertSame(25, $size['default']);
+        $this->assertNull($this->parameter($pathItem, 'perPage'));
+        $this->assertArrayNotHasKey('minimum', $this->parameter($pathItem, 'archived')['schema']);
+        $this->assertArrayNotHasKey('maximum', $this->parameter($pathItem, 'archived')['schema']);
+    }
+
+    public function test_query_constraints_do_not_rewrite_same_named_headers_or_paths(): void
+    {
+        $extracted = $this->endpoint('defaulted');
+        $config = new DocumentationConfig([]);
+        (new UseDataQuery($config))($extracted);
+        $endpoint = OutputEndpointData::create([
+            'httpMethods' => ['GET'], 'uri' => 'widgets', 'custom' => $extracted->custom,
+        ]);
+        $parameters = [
+            ['in' => 'header', 'name' => 'per_page', 'schema' => ['type' => 'string']],
+            ['in' => 'path', 'name' => 'page', 'schema' => ['type' => 'integer']],
+            ['in' => 'query', 'name' => 'unrelated', 'schema' => ['type' => 'integer']],
+        ];
+        $result = (new DataSchemaGenerator($config))->pathItem(['parameters' => $parameters], [], $endpoint);
+        $this->assertSame($parameters, $result['parameters']);
+    }
+
     private function endpoint(string $method): ExtractedEndpointData
     {
         $route = $this->app['router']->get('widgets', [WidgetController::class, $method]);

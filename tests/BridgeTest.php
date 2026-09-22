@@ -38,6 +38,10 @@ class BridgeTest extends TestCase
         $schema = $endpointData->custom['dataRequestSchema'];
         $this->assertSame('#/$defs/WidgetStatus', $schema['properties']['status']['$ref']);
         $this->assertArrayHasKey('WidgetStatus', $schema['$defs']);
+        $this->assertSame([
+            ['$ref' => '#/$defs/OwnerData'],
+            ['type' => 'null'],
+        ], $schema['properties']['owner']['anyOf']);
     }
 
     public function test_response_strategy_produces_response_and_stashes_schema(): void
@@ -110,6 +114,9 @@ class BridgeTest extends TestCase
         $this->assertArrayNotHasKey('$schema', $requestSchema);
 
         $responseSchema = $pathItem['responses']['200']['content']['application/json']['schema'];
-        $this->assertSame('#/components/schemas/OwnerData', $responseSchema['properties']['owner']['$ref']);
+        $this->assertSame([
+            ['$ref' => '#/components/schemas/OwnerData'],
+            ['type' => 'null'],
+        ], $responseSchema['properties']['owner']['anyOf']);
     }
 }
