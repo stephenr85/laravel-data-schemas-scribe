@@ -69,7 +69,8 @@ class AddressableResponseBridgeTest extends TestCase
         $root = $generator->root(['components' => ['schemas' => [
             'AddressableSiloData' => $existing,
         ]]], $groups);
-        $operation = $generator->pathItem([], $groups, $endpoint);
+        // Scribe can invoke root() and pathItem() on separate generator instances.
+        $operation = (new DataSchemaGenerator($config))->pathItem([], $groups, $endpoint);
         $ref = $operation['responses']['200']['content']['application/json']['schema']['properties']['data']['$ref'];
 
         $this->assertStringStartsWith('#/components/schemas/', $ref);
@@ -101,8 +102,106 @@ class AddressableResponseBridgeTest extends TestCase
         $groups = [['description' => '', 'name' => 'Examples', 'endpoints' => $endpoints]];
         $generator = new DataSchemaGenerator(new DocumentationConfig([]));
 
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('component name collision');
-        $generator->root([], $groups);
+        if ($sameIdentity) {
+            // An explicitly declared absolute $id remains a write-once schema identity.
+            $this->expectException(\InvalidArgumentException::class);
+            $this->expectExceptionMessage('component name collision');
+            $generator->root([], $groups);
+
+            return;
+        }
+
+        // Distinct addressable schemas with the same title need distinct OpenAPI component names.
+        $root = $generator->root([], $groups);
+        $this->assertCount(2, $root['components']['schemas']);
+    }
+
+    public function test_unaddressable_request_and_response_variants_keep_distinct_component_refs(): void
+    {
+        $first = [
+            'type' => 'object',
+            'properties' => ['breakpoint' => ['type' => 'string']],
+            'required' => ['breakpoint'],
+        ];
+        $second = [
+            'type' => 'object',
+            'properties' => ['breakpoint' => ['type' => 'string'], 'computedLabel' => ['type' => 'string']],
+            'required' => ['breakpoint', 'computedLabel'],
+        ];
+        $blockStyle = [
+            'type' => 'object',
+            'properties' => ['layers' => ['type' => 'array', 'items' => ['$ref' => '#/$defs/StyleLayerData']]],
+            'required' => ['layers'],
+        ];
+        $endpoints = [
+            OutputEndpointData::create(['httpMethods' => ['POST'], 'uri' => 'styles', 'custom' => [
+                'dataRequestSchema' => [
+                    'type' => 'object',
+                    'properties' => ['style' => ['$ref' => '#/$defs/StyleLayerData'], 'blockStyle' => ['$ref' => '#/$defs/BlockStyleData']],
+                    'required' => ['style', 'blockStyle'],
+                    '$defs' => ['StyleLayerData' => $first, 'BlockStyleData' => $blockStyle],
+                ],
+            ]]),
+            OutputEndpointData::create(['httpMethods' => ['GET'], 'uri' => 'styles/{id}', 'custom' => [
+                'dataResponseSchemas' => [['status' => 200, 'schema' => [
+                    'type' => 'object',
+                    'properties' => ['style' => ['$ref' => '#/$defs/StyleLayerData'], 'blockStyle' => ['$ref' => '#/$defs/BlockStyleData']],
+                    'required' => ['style', 'blockStyle'],
+                    '$defs' => ['StyleLayerData' => $second, 'BlockStyleData' => $blockStyle],
+                ]]],
+            ]]),
+        ];
+        $groups = [['description' => '', 'name' => 'Styles', 'endpoints' => $endpoints]];
+        $generator = new DataSchemaGenerator(new DocumentationConfig([]));
+
+        $root = $generator->root([], $groups);
+        $request = (new DataSchemaGenerator(new DocumentationConfig([])))->pathItem([], $groups, $endpoints[0]);
+        $response = (new DataSchemaGenerator(new DocumentationConfig([])))->pathItem([], $groups, $endpoints[1]);
+        $requestRef = $request['requestBody']['content']['application/json']['schema']['properties']['style']['$ref'];
+        $responseRef = $response['responses']['200']['content']['application/json']['schema']['properties']['style']['$ref'];
+        $requestBlockRef = $request['requestBody']['content']['application/json']['schema']['properties']['blockStyle']['$ref'];
+        $responseBlockRef = $response['responses']['200']['content']['application/json']['schema']['properties']['blockStyle']['$ref'];
+        $requestName = substr($requestRef, strlen('#/components/schemas/'));
+        $responseName = substr($responseRef, strlen('#/components/schemas/'));
+        $requestBlockName = substr($requestBlockRef, strlen('#/components/schemas/'));
+        $responseBlockName = substr($responseBlockRef, strlen('#/components/schemas/'));
+
+        $this->assertNotSame($requestRef, $responseRef);
+        $this->assertArrayHasKey($requestName, $root['components']['schemas']);
+        $this->assertArrayHasKey($responseName, $root['components']['schemas']);
+        $this->assertSame($first['properties'], $root['components']['schemas'][$requestName]['properties']);
+        $this->assertSame($second['properties'], $root['components']['schemas'][$responseName]['properties']);
+        $this->assertNotSame($requestBlockRef, $responseBlockRef);
+        $this->assertSame($requestRef, $root['components']['schemas'][$requestBlockName]['properties']['layers']['items']['$ref']);
+        $this->assertSame($responseRef, $root['components']['schemas'][$responseBlockName]['properties']['layers']['items']['$ref']);
+    }
+
+    public function test_operation_hook_reuses_root_alias_for_existing_component_collision(): void
+    {
+        $endpoint = OutputEndpointData::create(['httpMethods' => ['POST'], 'uri' => 'collisions', 'custom' => [
+            'dataRequestSchema' => [
+                'type' => 'object',
+                'properties' => ['data' => ['$ref' => '#/$defs/CollisionData']],
+                '$defs' => ['CollisionData' => [
+                    'type' => 'object',
+                    'properties' => ['value' => ['type' => 'string']],
+                ]],
+            ],
+        ]]);
+        $groups = [['description' => '', 'name' => 'Collisions', 'endpoints' => [$endpoint]]];
+        $generator = new DataSchemaGenerator(new DocumentationConfig([]));
+        $root = $generator->root(['components' => ['schemas' => ['CollisionData' => [
+            'type' => 'object',
+            'properties' => ['id' => ['type' => 'integer']],
+        ]]]], $groups);
+
+        // This matches Scribe's independent generator-hook lifecycle.
+        $operation = (new DataSchemaGenerator(new DocumentationConfig([])))->pathItem([], $groups, $endpoint);
+        $ref = $operation['requestBody']['content']['application/json']['schema']['properties']['data']['$ref'];
+        $name = substr($ref, strlen('#/components/schemas/'));
+
+        $this->assertNotSame('CollisionData', $name);
+        $this->assertArrayHasKey($name, $root['components']['schemas']);
+        $this->assertSame(['value' => ['type' => 'string']], $root['components']['schemas'][$name]['properties']);
     }
 }

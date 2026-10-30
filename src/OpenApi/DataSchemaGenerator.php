@@ -19,6 +19,12 @@ use Schemastud\DataSchemas\Support\OpenApi;
  */
 class DataSchemaGenerator extends OpenApiGenerator
 {
+    /** @var array<string, array<string, string>> Schema fingerprint => definition name => component name. */
+    private array $componentAliases = [];
+
+    /** @var array<string, array<string, array<string, string>>> Endpoint-set fingerprint => aliases. */
+    private static array $rootAliasesByEndpointSet = [];
+
     public function root(array $root, array $groupedEndpoints): array
     {
         // Our schemas use JSON Schema 2020-12 semantics ($ref siblings, type
@@ -31,10 +37,13 @@ class DataSchemaGenerator extends OpenApiGenerator
         foreach ($existing as $name => $definition) {
             $identities[OpenApi::componentName((string) $name, $definition)] = $definition['$id'] ?? null;
         }
+        $this->componentAliases = $this->componentAliases($groupedEndpoints, $schemas, $identities);
+        self::$rootAliasesByEndpointSet[$this->endpointSetFingerprint($groupedEndpoints)] = $this->componentAliases;
 
         foreach ($groupedEndpoints as $group) {
             foreach ($group['endpoints'] as $endpoint) {
                 foreach ($this->endpointSchemas($endpoint) as $schema) {
+                    $schema = $this->withComponentAliases($schema);
                     $converted = OpenApi::toOpenApiComponents($schema);
                     foreach ($schema['$defs'] ?? [] as $name => $definition) {
                         $component = OpenApi::componentName((string) $name, $definition);
@@ -79,6 +88,13 @@ class DataSchemaGenerator extends OpenApiGenerator
      */
     public function pathItem(array $pathItem, array $groupedEndpoints, OutputEndpointData $endpoint): array
     {
+        // Scribe may instantiate each generator hook independently. Rebuild the deterministic
+        // aliases from the complete endpoint set here so operation refs match the components
+        // emitted by root(), even when this object did not run root() first.
+        $endpointSet = $this->endpointSetFingerprint($groupedEndpoints);
+        $this->componentAliases = self::$rootAliasesByEndpointSet[$endpointSet]
+            ?? $this->componentAliases($groupedEndpoints, [], []);
+
         $requestSchema = $endpoint->custom['dataRequestSchema'] ?? null;
         if ($requestSchema) {
             // A request DTO carrying an UploadedFile property surfaces as a
@@ -267,6 +283,7 @@ class DataSchemaGenerator extends OpenApiGenerator
      */
     protected function operationSchema(array $schema): array
     {
+        $schema = $this->withComponentAliases($schema);
         $converted = OpenApi::toOpenApiComponents($schema);
         unset($converted['components'], $converted['$id'], $converted['$schema']);
 
@@ -295,5 +312,213 @@ class DataSchemaGenerator extends OpenApiGenerator
         }
 
         return $schemas;
+    }
+
+    /** @param array<int, array{endpoints: array<int, OutputEndpointData>}> $groupedEndpoints */
+    private function endpointSetFingerprint(array $groupedEndpoints): string
+    {
+        $schemas = [];
+        foreach ($groupedEndpoints as $group) {
+            foreach ($group['endpoints'] as $endpoint) {
+                foreach ($this->endpointSchemas($endpoint) as $schema) {
+                    $schemas[] = $this->schemaFingerprint($schema);
+                }
+            }
+        }
+
+        return hash('sha256', json_encode($schemas, JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Give colliding, non-addressable definitions stable bridge-local component names.
+     *
+     * The Data schema keeps its declared short $defs names and ref graph. OpenAPI, however,
+     * flattens definitions from every endpoint into one document-global namespace. Two legitimate
+     * request/response projections (or two PHP classes with the same short name) can therefore have
+     * one local name but different shapes. Split only those variants here; leave ordinary component
+     * names byte-for-byte stable. An explicit absolute $id remains write-once and conflicting
+     * shapes under the same id still fail closed.
+     *
+     * @param  array<int, array{description: string, name: string, endpoints: array<int, OutputEndpointData>}>  $groupedEndpoints
+     * @param  array<string, array>  $existingSchemas
+     * @param  array<string, string|null>  $existingIdentities
+     * @return array<string, array<string, string>>
+     */
+    private function componentAliases(array $groupedEndpoints, array $existingSchemas, array $existingIdentities): array
+    {
+        $variants = [];
+        $addressed = [];
+        $schemaDefinitions = [];
+
+        foreach ($groupedEndpoints as $group) {
+            foreach ($group['endpoints'] as $endpoint) {
+                foreach ($this->endpointSchemas($endpoint) as $schema) {
+                    $schemaFingerprint = $this->schemaFingerprint($schema);
+                    foreach ($schema['$defs'] ?? [] as $name => $definition) {
+                        $component = OpenApi::componentName((string) $name, $definition);
+                        $identity = $definition['$id'] ?? $name;
+                        $variant = hash('sha256', json_encode(
+                            [$identity, $definition],
+                            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+                        ));
+                        $variants[$component][$variant] = true;
+                        $schemaDefinitions[$schemaFingerprint][(string) $name] = $component;
+
+                        if (isset($definition['$id'])) {
+                            $idFingerprint = hash('sha256', json_encode(
+                                $definition,
+                                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR,
+                            ));
+                            if (isset($addressed[$component][$definition['$id']])
+                                && $addressed[$component][$definition['$id']] !== $idFingerprint) {
+                                throw new InvalidArgumentException("OpenAPI component name collision [{$component}].");
+                            }
+                            $addressed[$component][$definition['$id']] = $idFingerprint;
+                        }
+                    }
+                }
+            }
+        }
+
+        $aliases = [];
+        foreach ($schemaDefinitions as $schemaFingerprint => $definitions) {
+            $hasCollision = false;
+            foreach ($definitions as $component) {
+                if (count($variants[$component] ?? []) > 1) {
+                    $hasCollision = true;
+                    break;
+                }
+            }
+
+            if ($hasCollision) {
+                $aliases[$schemaFingerprint] = $this->namespacedDefinitions($definitions, $schemaFingerprint);
+            }
+        }
+
+        // A previous OpenAPI root generator may already own a short component name. Preserve exact
+        // identity/shape deduplication, but namespace the affected schema bundle if one of its
+        // components would otherwise collide with that existing component.
+        $this->componentAliases = $aliases;
+        foreach ($groupedEndpoints as $group) {
+            foreach ($group['endpoints'] as $endpoint) {
+                foreach ($this->endpointSchemas($endpoint) as $schema) {
+                    $schemaFingerprint = $this->schemaFingerprint($schema);
+                    if (isset($aliases[$schemaFingerprint])) {
+                        continue;
+                    }
+                    $converted = OpenApi::toOpenApiComponents($this->withComponentAliases($schema));
+                    foreach ($schema['$defs'] ?? [] as $name => $definition) {
+                        $component = OpenApi::componentName((string) $name, $definition);
+                        $identity = $definition['$id'] ?? $name;
+                        if (! isset($existingSchemas[$component])) {
+                            continue;
+                        }
+
+                        $body = $converted['components']['schemas'][$component] ?? null;
+                        $existingIdentity = $existingIdentities[$component] ?? null;
+                        if ($body === null || (($existingIdentity === null || $existingIdentity === $identity) && $existingSchemas[$component] == $body)) {
+                            continue;
+                        }
+
+                        // A reused explicit absolute ID with a changed body is an identity error,
+                        // not a naming collision. Keep the existing fail-closed behavior.
+                        if (isset($definition['$id']) && $existingIdentity === $identity) {
+                            continue;
+                        }
+
+                        $aliases[$schemaFingerprint] = $this->namespacedDefinitions($schemaDefinitions[$schemaFingerprint] ?? [], $schemaFingerprint);
+                        $this->componentAliases = $aliases;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $aliases;
+    }
+
+    /** @param array<string, string> $definitions
+     *  @return array<string, string>
+     */
+    private function namespacedDefinitions(array $definitions, string $schemaFingerprint): array
+    {
+        $aliases = [];
+        foreach ($definitions as $name => $component) {
+            $aliases[$name] = $component.'__'.hash('sha256', $schemaFingerprint."\0".$name);
+        }
+
+        return $aliases;
+    }
+
+    /** @param array<string, mixed> $schema */
+    private function schemaFingerprint(array $schema): string
+    {
+        return hash('sha256', json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Apply the document-global component aliases while preserving the schema's local ref graph.
+     *
+     * @param  array<string, mixed>  $schema
+     * @return array<string, mixed>
+     */
+    private function withComponentAliases(array $schema): array
+    {
+        $definitions = $schema['$defs'] ?? [];
+        if ($definitions === [] || $this->componentAliases === []) {
+            return $schema;
+        }
+
+        $schemaAliases = $this->componentAliases[$this->schemaFingerprint($schema)] ?? [];
+        if ($schemaAliases === []) {
+            return $schema;
+        }
+
+        $renames = [];
+        $renamedDefinitions = [];
+        foreach ($definitions as $name => $definition) {
+            $component = $schemaAliases[(string) $name] ?? null;
+            if ($component === null) {
+                $renamedDefinitions[$name] = $definition;
+                continue;
+            }
+
+            $escapedName = str_replace(['~', '/'], ['~0', '~1'], (string) $name);
+            $escapedComponent = str_replace(['~', '/'], ['~0', '~1'], $component);
+            $renames['#/$defs/'.$escapedName] = '#/$defs/'.$escapedComponent;
+            $renames[(string) $name] = $component;
+            $renamedDefinitions[$component] = $definition;
+        }
+
+        if ($renames === []) {
+            return $schema;
+        }
+
+        $schema = $this->rewriteDefinitionRefs($schema, $renames);
+        foreach ($renamedDefinitions as $name => $definition) {
+            $renamedDefinitions[$name] = $this->rewriteDefinitionRefs($definition, $renames);
+        }
+        $schema['$defs'] = $renamedDefinitions;
+
+        return $schema;
+    }
+
+    /** @param array<string, string> $renames */
+    private function rewriteDefinitionRefs(mixed $node, array $renames): mixed
+    {
+        if (! is_array($node)) {
+            return $node;
+        }
+
+        foreach ($node as $key => $value) {
+            if ($key === '$ref' && is_string($value) && isset($renames[$value])) {
+                $node[$key] = $renames[$value];
+                continue;
+            }
+
+            $node[$key] = $this->rewriteDefinitionRefs($value, $renames);
+        }
+
+        return $node;
     }
 }
